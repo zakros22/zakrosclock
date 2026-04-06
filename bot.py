@@ -86,6 +86,16 @@ def add_referral(referrer_id, referred_id):
     conn.commit()
     return True
 
+def cancel_reminder(reminder_id, user_id):
+    c.execute("UPDATE reminders SET is_active=0 WHERE id=? AND user_id=?", (reminder_id, user_id))
+    conn.commit()
+    return c.rowcount > 0
+
+def cancel_repeat(repeat_id, user_id):
+    c.execute("UPDATE repeats SET is_active=0 WHERE id=? AND user_id=?", (repeat_id, user_id))
+    conn.commit()
+    return c.rowcount > 0
+
 temp_data = {}
 
 # ========== دالة تنسيق الوقت ==========
@@ -123,15 +133,15 @@ def run_reminder_timer(user_id, duration_seconds, reminder_id, channel_id, messa
             return
         
         time_str = format_time(remaining)
-        text = f"⏰ *الوقت المتبقي:*\n`{time_str}`"
+        text = f"⏰ الوقت المتبقي:\n{time_str}"
         
         if last_msg_id:
             try:
-                bot.edit_message_text(text, user_id, last_msg_id, parse_mode="Markdown")
+                bot.edit_message_text(text, user_id, last_msg_id)
             except:
-                last_msg_id = bot.send_message(user_id, text, parse_mode="Markdown").message_id
+                last_msg_id = bot.send_message(user_id, text).message_id
         else:
-            last_msg_id = bot.send_message(user_id, text, parse_mode="Markdown").message_id
+            last_msg_id = bot.send_message(user_id, text).message_id
         
         time.sleep(1)
         remaining -= 1
@@ -162,7 +172,6 @@ def run_reminder_timer(user_id, duration_seconds, reminder_id, channel_id, messa
 
 # ========== التكرار (بدون نص إضافي) ==========
 def run_repeat_timer(repeat_id, interval_seconds, user_id, channel_id, message, media_type, media_file_id, end_time):
-    """تشغيل التكرار - إرسال المحتوى فقط بدون نص إضافي"""
     count = 1
     while True:
         time.sleep(interval_seconds)
@@ -227,14 +236,13 @@ def start(message):
         markup.add(InlineKeyboardButton("🔧 لوحة التحكم", callback_data="admin_panel"))
     
     bot.send_message(user_id,
-        f"🎯 *بوت المنبه والتكرار*\n\n"
+        f"🎯 بوت المنبه والتكرار\n\n"
         f"⭐ رصيدك: {user['points']} نقطة\n"
         f"• كل منبه أو تكرار يستهلك نقطة واحدة.\n"
         f"• احصل على نقاط عبر مشاركة الرابط (كل مشاركة = 3 نقاط).\n\n"
-        f"🔗 رابط إحالتك:\n"
-        f"https://t.me/{bot.get_me().username}?start={user_id}\n\n"
-        f"📌 @ZeQuiz_Bot",
-        parse_mode="Markdown", reply_markup=markup)
+        f"🔗 رابط إحالتك:\nhttps://t.me/{bot.get_me().username}?start={user_id}\n\n"
+        f"@ZeQuiz_Bot",
+        reply_markup=markup)
 
 @bot.callback_query_handler(func=lambda call: call.data == "share_link")
 def share_link(call):
@@ -250,11 +258,14 @@ def my_reminders(call):
     if not rows:
         bot.send_message(user_id, "📭 لا توجد منبهات نشطة حالياً.")
         return
-    txt = "⏰ *المنبهات النشطة*\n\n"
+    
     for rid, val, unit, msg in rows:
         unit_text = convert_unit_text(unit)
-        txt += f"🆔 `{rid}` | {val} {unit_text}\n📝 {msg[:40] if msg else 'بدون نص'}\n\n"
-    bot.send_message(user_id, txt, parse_mode="Markdown")
+        markup = InlineKeyboardMarkup()
+        markup.add(InlineKeyboardButton("🗑️ إلغاء المنبه", callback_data=f"cancel_reminder_{rid}"))
+        bot.send_message(user_id,
+            f"⏰ منبه\n🆔 المعرف: {rid}\n⏰ الوقت: {val} {unit_text}\n📝 {msg[:50] if msg else 'بدون نص'}",
+            reply_markup=markup)
 
 @bot.callback_query_handler(func=lambda call: call.data == "my_repeats")
 def my_repeats(call):
@@ -264,11 +275,37 @@ def my_repeats(call):
     if not rows:
         bot.send_message(user_id, "📭 لا توجد تكرارات نشطة حالياً.")
         return
-    txt = "🔄 *التكرارات النشطة*\n\n"
+    
     for rid, val, unit, msg in rows:
         unit_text = convert_unit_text(unit)
-        txt += f"🆔 `{rid}` | كل {val} {unit_text}\n📝 {msg[:40] if msg else 'بدون نص'}\n\n"
-    bot.send_message(user_id, txt, parse_mode="Markdown")
+        markup = InlineKeyboardMarkup()
+        markup.add(InlineKeyboardButton("🗑️ إلغاء التكرار", callback_data=f"cancel_repeat_{rid}"))
+        bot.send_message(user_id,
+            f"🔄 تكرار\n🆔 المعرف: {rid}\n🔄 كل: {val} {unit_text}\n📝 {msg[:50] if msg else 'بدون نص'}",
+            reply_markup=markup)
+
+# ========== إلغاء المنبه أو التكرار ==========
+@bot.callback_query_handler(func=lambda call: call.data.startswith("cancel_reminder_"))
+def cancel_reminder_callback(call):
+    user_id = call.message.chat.id
+    reminder_id = int(call.data.split("_")[2])
+    
+    if cancel_reminder(reminder_id, user_id):
+        bot.answer_callback_query(call.id, "✅ تم إلغاء المنبه بنجاح!")
+        bot.edit_message_text("🗑️ تم إلغاء هذا المنبه", user_id, call.message.message_id)
+    else:
+        bot.answer_callback_query(call.id, "❌ المنبه غير موجود أو تم إلغاؤه مسبقاً", True)
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("cancel_repeat_"))
+def cancel_repeat_callback(call):
+    user_id = call.message.chat.id
+    repeat_id = int(call.data.split("_")[2])
+    
+    if cancel_repeat(repeat_id, user_id):
+        bot.answer_callback_query(call.id, "✅ تم إلغاء التكرار بنجاح!")
+        bot.edit_message_text("🗑️ تم إلغاء هذا التكرار", user_id, call.message.message_id)
+    else:
+        bot.answer_callback_query(call.id, "❌ التكرار غير موجود أو تم إلغاؤه مسبقاً", True)
 
 # ========== إنشاء منبه ==========
 @bot.callback_query_handler(func=lambda call: call.data == "new_reminder")
@@ -286,7 +323,7 @@ def new_reminder_start(call):
         InlineKeyboardButton("⏰ دقائق", callback_data="reminder_unit_minutes"),
         InlineKeyboardButton("🕐 ساعات", callback_data="reminder_unit_hours")
     )
-    bot.edit_message_text("⏰ *اختر وحدة الوقت للمنبه*", user_id, call.message.message_id, parse_mode="Markdown", reply_markup=markup)
+    bot.edit_message_text("⏰ اختر وحدة الوقت للمنبه", user_id, call.message.message_id, reply_markup=markup)
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("reminder_unit_"))
 def process_reminder_unit(call):
@@ -294,7 +331,7 @@ def process_reminder_unit(call):
     unit = call.data.split("_")[2]
     temp_data[user_id]["unit"] = unit
     temp_data[user_id]["step"] = "value"
-    bot.edit_message_text(f"⌨️ *أرسل الرقم* (مثال: 30):", user_id, call.message.message_id, parse_mode="Markdown")
+    bot.edit_message_text(f"⌨️ أرسل الرقم (مثال: 30):", user_id, call.message.message_id)
     bot.register_next_step_handler(call.message, process_reminder_value)
 
 def process_reminder_value(message):
@@ -311,9 +348,9 @@ def process_reminder_value(message):
             InlineKeyboardButton("📱 البوت فقط", callback_data="reminder_channel_none"),
             InlineKeyboardButton("📢 قناة (أضف البوت أدمن)", callback_data="reminder_channel_add")
         )
-        bot.send_message(user_id, "📍 *أين تريد إرسال المنبه؟*", parse_mode="Markdown", reply_markup=markup)
+        bot.send_message(user_id, "📍 أين تريد إرسال المنبه؟", reply_markup=markup)
     except:
-        bot.send_message(user_id, "❌ *خطأ:* أرسل رقماً صحيحاً أكبر من 0.", parse_mode="Markdown")
+        bot.send_message(user_id, "❌ أرسل رقماً صحيحاً أكبر من 0.")
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("reminder_channel_"))
 def process_reminder_channel(call):
@@ -328,10 +365,10 @@ def process_reminder_channel(call):
             InlineKeyboardButton("📄 ملف", callback_data="reminder_msg_document"),
             InlineKeyboardButton("🎥 فيديو", callback_data="reminder_msg_video")
         )
-        bot.edit_message_text("📝 *اختر نوع المحتوى للمنبه*", user_id, call.message.message_id, parse_mode="Markdown", reply_markup=markup)
+        bot.edit_message_text("📝 اختر نوع المحتوى للمنبه", user_id, call.message.message_id, reply_markup=markup)
     else:
         temp_data[user_id]["step"] = "channel_id"
-        bot.edit_message_text("📢 *أرسل معرف القناة* (مثال: @username):", user_id, call.message.message_id, parse_mode="Markdown")
+        bot.edit_message_text("📢 أرسل معرف القناة (مثال: @username):", user_id, call.message.message_id)
         bot.register_next_step_handler(call.message, process_reminder_channel_id)
 
 def process_reminder_channel_id(message):
@@ -346,7 +383,7 @@ def process_reminder_channel_id(message):
         InlineKeyboardButton("📄 ملف", callback_data="reminder_msg_document"),
         InlineKeyboardButton("🎥 فيديو", callback_data="reminder_msg_video")
     )
-    bot.send_message(user_id, "📝 *اختر نوع المحتوى للمنبه*", parse_mode="Markdown", reply_markup=markup)
+    bot.send_message(user_id, "📝 اختر نوع المحتوى للمنبه", reply_markup=markup)
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("reminder_msg_"))
 def process_reminder_msg_type(call):
@@ -356,16 +393,16 @@ def process_reminder_msg_type(call):
     temp_data[user_id]["step"] = "content"
     
     if msg_type == "text":
-        bot.edit_message_text("✏️ *أرسل النص الذي تريد إرساله عند انتهاء المنبه*", user_id, call.message.message_id, parse_mode="Markdown")
+        bot.edit_message_text("✏️ أرسل النص الذي تريد إرساله عند انتهاء المنبه", user_id, call.message.message_id)
         bot.register_next_step_handler(call.message, process_reminder_text)
     elif msg_type == "photo":
-        bot.edit_message_text("🖼️ *أرسل الصورة*", user_id, call.message.message_id, parse_mode="Markdown")
+        bot.edit_message_text("🖼️ أرسل الصورة", user_id, call.message.message_id)
         bot.register_next_step_handler(call.message, process_reminder_media, "photo")
     elif msg_type == "document":
-        bot.edit_message_text("📄 *أرسل الملف*", user_id, call.message.message_id, parse_mode="Markdown")
+        bot.edit_message_text("📄 أرسل الملف", user_id, call.message.message_id)
         bot.register_next_step_handler(call.message, process_reminder_media, "document")
     elif msg_type == "video":
-        bot.edit_message_text("🎥 *أرسل الفيديو*", user_id, call.message.message_id, parse_mode="Markdown")
+        bot.edit_message_text("🎥 أرسل الفيديو", user_id, call.message.message_id)
         bot.register_next_step_handler(call.message, process_reminder_media, "video")
 
 def process_reminder_text(message):
@@ -386,7 +423,7 @@ def process_reminder_media(message, media_type):
         file_id = message.video.file_id
         caption = message.caption
     else:
-        bot.send_message(user_id, "❌ *نوع الملف غير صحيح* أعد المحاولة.", parse_mode="Markdown")
+        bot.send_message(user_id, "❌ نوع الملف غير صحيح. أعد المحاولة.")
         return
     
     temp_data[user_id]["media_file_id"] = file_id
@@ -413,7 +450,7 @@ def finalize_reminder(user_id):
     
     new_user = get_user(user_id)
     unit_text = convert_unit_text(unit)
-    bot.send_message(user_id, f"✅ *تم إنشاء المنبه بنجاح!*\n\n⏰ الوقت: {value} {unit_text}\n⭐ النقاط المتبقية: {new_user['points']}\n\n📢 سيظهر لك مؤقت تنازلي فوراً!", parse_mode="Markdown")
+    bot.send_message(user_id, f"✅ تم إنشاء المنبه بنجاح!\n\n⏰ الوقت: {value} {unit_text}\n⭐ النقاط المتبقية: {new_user['points']}\n\n📢 سيظهر لك مؤقت تنازلي فوراً!")
 
 # ========== إنشاء تكرار ==========
 @bot.callback_query_handler(func=lambda call: call.data == "new_repeat")
@@ -431,7 +468,7 @@ def new_repeat_start(call):
         InlineKeyboardButton("⏰ دقائق", callback_data="repeat_interval_unit_minutes"),
         InlineKeyboardButton("🕐 ساعات", callback_data="repeat_interval_unit_hours")
     )
-    bot.edit_message_text("🔄 *اختر وحدة الوقت بين كل تكرار*", user_id, call.message.message_id, parse_mode="Markdown", reply_markup=markup)
+    bot.edit_message_text("🔄 اختر وحدة الوقت بين كل تكرار", user_id, call.message.message_id, reply_markup=markup)
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("repeat_interval_unit_"))
 def process_repeat_interval_unit(call):
@@ -439,7 +476,7 @@ def process_repeat_interval_unit(call):
     unit = call.data.split("_")[3]
     temp_data[user_id]["interval_unit"] = unit
     temp_data[user_id]["step"] = "interval_value"
-    bot.edit_message_text(f"⌨️ *أرسل الرقم* (مثال: 30):", user_id, call.message.message_id, parse_mode="Markdown")
+    bot.edit_message_text(f"⌨️ أرسل الرقم (مثال: 30):", user_id, call.message.message_id)
     bot.register_next_step_handler(call.message, process_repeat_interval_value)
 
 def process_repeat_interval_value(message):
@@ -457,9 +494,9 @@ def process_repeat_interval_value(message):
             InlineKeyboardButton("⏰ دقائق", callback_data="repeat_end_unit_minutes"),
             InlineKeyboardButton("🕐 ساعات", callback_data="repeat_end_unit_hours")
         )
-        bot.send_message(user_id, "⏰ *اختر وحدة مدة انتهاء التكرار*", parse_mode="Markdown", reply_markup=markup)
+        bot.send_message(user_id, "⏰ اختر وحدة مدة انتهاء التكرار", reply_markup=markup)
     except:
-        bot.send_message(user_id, "❌ *خطأ:* أرسل رقماً صحيحاً أكبر من 0.", parse_mode="Markdown")
+        bot.send_message(user_id, "❌ أرسل رقماً صحيحاً أكبر من 0.")
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("repeat_end_unit_"))
 def process_repeat_end_unit(call):
@@ -467,7 +504,7 @@ def process_repeat_end_unit(call):
     unit = call.data.split("_")[3]
     temp_data[user_id]["end_unit"] = unit
     temp_data[user_id]["step"] = "end_value"
-    bot.edit_message_text(f"⌨️ *أرسل المدة* (مثال: 24):", user_id, call.message.message_id, parse_mode="Markdown")
+    bot.edit_message_text(f"⌨️ أرسل المدة (مثال: 24):", user_id, call.message.message_id)
     bot.register_next_step_handler(call.message, process_repeat_end_value)
 
 def process_repeat_end_value(message):
@@ -484,9 +521,9 @@ def process_repeat_end_value(message):
             InlineKeyboardButton("📱 البوت فقط", callback_data="repeat_channel_none"),
             InlineKeyboardButton("📢 قناة (أضف البوت أدمن)", callback_data="repeat_channel_add")
         )
-        bot.send_message(user_id, "📍 *أين تريد إرسال التكرارات؟*", parse_mode="Markdown", reply_markup=markup)
+        bot.send_message(user_id, "📍 أين تريد إرسال التكرارات؟", reply_markup=markup)
     except:
-        bot.send_message(user_id, "❌ *خطأ:* أرسل رقماً صحيحاً أكبر من 0.", parse_mode="Markdown")
+        bot.send_message(user_id, "❌ أرسل رقماً صحيحاً أكبر من 0.")
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("repeat_channel_"))
 def process_repeat_channel(call):
@@ -501,10 +538,10 @@ def process_repeat_channel(call):
             InlineKeyboardButton("📄 ملف", callback_data="repeat_msg_document"),
             InlineKeyboardButton("🎥 فيديو", callback_data="repeat_msg_video")
         )
-        bot.edit_message_text("📝 *اختر نوع المحتوى للتكرار*", user_id, call.message.message_id, parse_mode="Markdown", reply_markup=markup)
+        bot.edit_message_text("📝 اختر نوع المحتوى للتكرار", user_id, call.message.message_id, reply_markup=markup)
     else:
         temp_data[user_id]["step"] = "channel_id"
-        bot.edit_message_text("📢 *أرسل معرف القناة* (مثال: @username):", user_id, call.message.message_id, parse_mode="Markdown")
+        bot.edit_message_text("📢 أرسل معرف القناة (مثال: @username):", user_id, call.message.message_id)
         bot.register_next_step_handler(call.message, process_repeat_channel_id)
 
 def process_repeat_channel_id(message):
@@ -519,7 +556,7 @@ def process_repeat_channel_id(message):
         InlineKeyboardButton("📄 ملف", callback_data="repeat_msg_document"),
         InlineKeyboardButton("🎥 فيديو", callback_data="repeat_msg_video")
     )
-    bot.send_message(user_id, "📝 *اختر نوع المحتوى للتكرار*", parse_mode="Markdown", reply_markup=markup)
+    bot.send_message(user_id, "📝 اختر نوع المحتوى للتكرار", reply_markup=markup)
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("repeat_msg_"))
 def process_repeat_msg_type(call):
@@ -529,16 +566,16 @@ def process_repeat_msg_type(call):
     temp_data[user_id]["step"] = "content"
     
     if msg_type == "text":
-        bot.edit_message_text("✏️ *أرسل النص الذي تريد تكراره*", user_id, call.message.message_id, parse_mode="Markdown")
+        bot.edit_message_text("✏️ أرسل النص الذي تريد تكراره", user_id, call.message.message_id)
         bot.register_next_step_handler(call.message, process_repeat_text)
     elif msg_type == "photo":
-        bot.edit_message_text("🖼️ *أرسل الصورة*", user_id, call.message.message_id, parse_mode="Markdown")
+        bot.edit_message_text("🖼️ أرسل الصورة", user_id, call.message.message_id)
         bot.register_next_step_handler(call.message, process_repeat_media, "photo")
     elif msg_type == "document":
-        bot.edit_message_text("📄 *أرسل الملف*", user_id, call.message.message_id, parse_mode="Markdown")
+        bot.edit_message_text("📄 أرسل الملف", user_id, call.message.message_id)
         bot.register_next_step_handler(call.message, process_repeat_media, "document")
     elif msg_type == "video":
-        bot.edit_message_text("🎥 *أرسل الفيديو*", user_id, call.message.message_id, parse_mode="Markdown")
+        bot.edit_message_text("🎥 أرسل الفيديو", user_id, call.message.message_id)
         bot.register_next_step_handler(call.message, process_repeat_media, "video")
 
 def process_repeat_text(message):
@@ -559,7 +596,7 @@ def process_repeat_media(message, media_type):
         file_id = message.video.file_id
         caption = message.caption
     else:
-        bot.send_message(user_id, "❌ *نوع الملف غير صحيح* أعد المحاولة.", parse_mode="Markdown")
+        bot.send_message(user_id, "❌ نوع الملف غير صحيح. أعد المحاولة.")
         return
     
     temp_data[user_id]["media_file_id"] = file_id
@@ -592,7 +629,7 @@ def finalize_repeat(user_id):
     new_user = get_user(user_id)
     interval_unit_text = convert_unit_text(interval_unit)
     end_unit_text = convert_unit_text(end_unit)
-    bot.send_message(user_id, f"✅ *تم إنشاء التكرار بنجاح!*\n\n🔄 كل {interval_value} {interval_unit_text}\n⏰ ينتهي بعد {end_value} {end_unit_text}\n⭐ النقاط المتبقية: {new_user['points']}", parse_mode="Markdown")
+    bot.send_message(user_id, f"✅ تم إنشاء التكرار بنجاح!\n\n🔄 كل {interval_value} {interval_unit_text}\n⏰ ينتهي بعد {end_value} {end_unit_text}\n⭐ النقاط المتبقية: {new_user['points']}")
 
 # ========== لوحة تحكم المالك ==========
 @bot.callback_query_handler(func=lambda call: call.data == "admin_panel")
@@ -607,37 +644,37 @@ def admin_panel(call):
         InlineKeyboardButton("📊 إحصائيات", callback_data="admin_stats"),
         InlineKeyboardButton("📢 إذاعة", callback_data="admin_broadcast")
     )
-    bot.send_message(OWNER_ID, "🔧 *لوحة تحكم المالك*", parse_mode="Markdown", reply_markup=markup)
+    bot.send_message(OWNER_ID, "🔧 لوحة تحكم المالك", reply_markup=markup)
 
 @bot.callback_query_handler(func=lambda call: call.data == "admin_add_points")
 def admin_add_points(call):
     if call.message.chat.id != OWNER_ID:
         return
-    msg = bot.send_message(OWNER_ID, "⌨️ *أرسل معرف المستخدم وعدد النقاط*\nمثال: `123456789 5`", parse_mode="Markdown")
+    msg = bot.send_message(OWNER_ID, "أرسل معرف المستخدم وعدد النقاط (مثال: 123456789 5):")
     bot.register_next_step_handler(msg, add_points_step)
 
 def add_points_step(message):
     try:
         uid, pts = map(int, message.text.split())
         update_points(uid, pts)
-        bot.send_message(OWNER_ID, f"✅ *تم إضافة {pts} نقطة للمستخدم {uid}*", parse_mode="Markdown")
+        bot.send_message(OWNER_ID, f"✅ تم إضافة {pts} نقطة للمستخدم {uid}")
     except:
-        bot.send_message(OWNER_ID, "❌ *صيغة غير صحيحة*\nأرسل: `user_id points`", parse_mode="Markdown")
+        bot.send_message(OWNER_ID, "❌ صيغة غير صحيحة. أرسل: user_id points")
 
 @bot.callback_query_handler(func=lambda call: call.data == "admin_remove_points")
 def admin_remove_points(call):
     if call.message.chat.id != OWNER_ID:
         return
-    msg = bot.send_message(OWNER_ID, "⌨️ *أرسل معرف المستخدم وعدد النقاط*\nمثال: `123456789 3`", parse_mode="Markdown")
+    msg = bot.send_message(OWNER_ID, "أرسل معرف المستخدم وعدد النقاط (مثال: 123456789 3):")
     bot.register_next_step_handler(msg, remove_points_step)
 
 def remove_points_step(message):
     try:
         uid, pts = map(int, message.text.split())
         update_points(uid, -pts)
-        bot.send_message(OWNER_ID, f"✅ *تم خصم {pts} نقطة من المستخدم {uid}*", parse_mode="Markdown")
+        bot.send_message(OWNER_ID, f"✅ تم خصم {pts} نقطة من المستخدم {uid}")
     except:
-        bot.send_message(OWNER_ID, "❌ *صيغة غير صحيحة*", parse_mode="Markdown")
+        bot.send_message(OWNER_ID, "❌ صيغة غير صحيحة")
 
 @bot.callback_query_handler(func=lambda call: call.data == "admin_stats")
 def admin_stats(call):
@@ -651,14 +688,14 @@ def admin_stats(call):
     repeats = c.fetchone()[0]
     c.execute("SELECT SUM(points) FROM users")
     points = c.fetchone()[0] or 0
-    bot.send_message(OWNER_ID, f"📊 *إحصائيات البوت*\n\n👥 المستخدمون: `{users}`\n⏰ المنبهات النشطة: `{reminders}`\n🔄 التكرارات النشطة: `{repeats}`\n⭐ مجموع النقاط: `{points}`", parse_mode="Markdown")
+    bot.send_message(OWNER_ID, f"📊 إحصائيات البوت\n\n👥 المستخدمون: {users}\n⏰ المنبهات النشطة: {reminders}\n🔄 التكرارات النشطة: {repeats}\n⭐ مجموع النقاط: {points}")
 
 @bot.callback_query_handler(func=lambda call: call.data == "admin_broadcast")
 def admin_broadcast(call):
     if call.message.chat.id != OWNER_ID:
         bot.answer_callback_query(call.id, "🔒 غير مصرح", True)
         return
-    msg = bot.send_message(OWNER_ID, "📢 *أرسل الرسالة التي تريد إذاعتها لجميع مستخدمي البوت*", parse_mode="Markdown")
+    msg = bot.send_message(OWNER_ID, "📢 أرسل الرسالة التي تريد إذاعتها لجميع مستخدمي البوت:")
     bot.register_next_step_handler(msg, send_broadcast)
 
 def send_broadcast(message):
@@ -668,12 +705,12 @@ def send_broadcast(message):
     success = 0
     for (uid,) in users:
         try:
-            bot.send_message(uid, f"📢 *إذاعة من المالك*\n\n{broadcast_text}\n\n@ZeQuiz_Bot", parse_mode="Markdown")
+            bot.send_message(uid, f"📢 إذاعة من المالك:\n\n{broadcast_text}\n\n@ZeQuiz_Bot")
             success += 1
         except:
             pass
         time.sleep(0.05)
-    bot.send_message(OWNER_ID, f"✅ *تم إرسال الإذاعة إلى {success} مستخدم*", parse_mode="Markdown")
+    bot.send_message(OWNER_ID, f"✅ تم إرسال الإذاعة إلى {success} مستخدم.")
 
 if __name__ == "__main__":
     print("✅ بوت المنبه والتكرار يعمل...")
