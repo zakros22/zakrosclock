@@ -160,8 +160,9 @@ def run_reminder_timer(user_id, duration_seconds, reminder_id, channel_id, messa
     conn.commit()
     bot.send_message(user_id, "✅ تم إرسال المنبه بنجاح!")
 
-# ========== التكرار ==========
+# ========== التكرار (بدون نص إضافي) ==========
 def run_repeat_timer(repeat_id, interval_seconds, user_id, channel_id, message, media_type, media_file_id, end_time):
+    """تشغيل التكرار - إرسال المحتوى فقط بدون نص إضافي"""
     count = 1
     while True:
         time.sleep(interval_seconds)
@@ -181,13 +182,22 @@ def run_repeat_timer(repeat_id, interval_seconds, user_id, channel_id, message, 
         
         try:
             if media_type == "photo":
-                bot.send_photo(chat_id, media_file_id, caption=message if message else "🔄 رسالة مكررة")
+                if message:
+                    bot.send_photo(chat_id, media_file_id, caption=message)
+                else:
+                    bot.send_photo(chat_id, media_file_id)
             elif media_type == "document":
-                bot.send_document(chat_id, media_file_id, caption=message if message else "🔄 ملف مكرر")
+                if message:
+                    bot.send_document(chat_id, media_file_id, caption=message)
+                else:
+                    bot.send_document(chat_id, media_file_id)
             elif media_type == "video":
-                bot.send_video(chat_id, media_file_id, caption=message if message else "🔄 فيديو مكرر")
+                if message:
+                    bot.send_video(chat_id, media_file_id, caption=message)
+                else:
+                    bot.send_video(chat_id, media_file_id)
             else:
-                bot.send_message(chat_id, message if message else "🔄 رسالة مكررة")
+                bot.send_message(chat_id, message if message else "رسالة مكررة")
             count += 1
         except Exception as e:
             bot.send_message(user_id, f"❌ فشل إرسال التكرار: {e}")
